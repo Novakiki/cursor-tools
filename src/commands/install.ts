@@ -286,135 +286,39 @@ export class InstallCommand implements Command {
     }
   }
 
-  async *execute(targetPath: string, options?: InstallOptions): CommandGenerator {
-    // If JSON option is provided, use the JSON installer
-    if (options?.json) {
-      const jsonInstaller = new JsonInstallCommand();
-      for await (const message of jsonInstaller.execute(targetPath, options)) {
-        yield message;
-      }
+  async *execute(query: string, options: CommandOptions): CommandGenerator {
+    const targetPath = query || process.cwd();
+    const installOptions: InstallOptions = {
+      ...options,
+      json: typeof options.json === 'string' ? options.json : undefined
+    };
+
+    if (installOptions.json) {
+      const jsonInstall = new JsonInstallCommand();
+      yield* jsonInstall.execute(targetPath, installOptions);
       return;
     }
 
-    const absolutePath = join(process.cwd(), targetPath);
-
-    // Check for local dependencies first
-    const dependencyWarning = await checkLocalDependencies(absolutePath);
-    if (dependencyWarning) {
-      yield dependencyWarning;
+    const warning = await checkLocalDependencies(targetPath);
+    if (warning) {
+      yield warning;
     }
 
-    // Setup API keys
-    yield 'Checking API keys setup...\n';
-    for await (const message of this.setupApiKeys()) {
-      yield message;
+    yield* this.setupApiKeys();
+    
+    const useCursorRulesDirectory = await askForCursorRulesDirectory();
+    process.env.USE_LEGACY_CURSORRULES = (!useCursorRulesDirectory).toString();
+    
+    const result = checkCursorRules(targetPath);
+    if (result.kind === 'error') {
+      yield `Error: ${result.message}\n`;
+      return;
     }
 
-    // Update/create cursor rules
-    try {
-      yield 'Checking cursor rules...\n';
-
-      // Ask user for directory preference first
-      const useNewDirectory = await askForCursorRulesDirectory();
-      process.env.USE_LEGACY_CURSORRULES = (!useNewDirectory).toString();
-
-      // Create necessary directories only if using new structure
-      if (useNewDirectory) {
-        const rulesDir = join(absolutePath, '.cursor', 'rules');
-        if (!existsSync(rulesDir)) {
-          try {
-            mkdirSync(rulesDir, { recursive: true });
-          } catch (error) {
-            yield `Error creating rules directory: ${error instanceof Error ? error.message : 'Unknown error'}\n`;
-            return;
-          }
-        }
-      }
-
-      const result = checkCursorRules(absolutePath);
-
-      if (result.kind === 'error') {
-        yield `Error: ${result.message}\n`;
-        return;
-      }
-
-      let existingContent = '';
-      let needsUpdate = result.needsUpdate;
-
-      if (!result.targetPath.endsWith('cursor-tools.mdc')) {
-        yield '\n🚧 Warning: Using legacy .cursorrules file. This file will be deprecated in a future release.\n' +
-          'To migrate to the new format:\n' +
-          '  1) Set USE_LEGACY_CURSORRULES=false in your environment\n' +
-          '  2) Run cursor-tools install . again\n' +
-          '  3) Remove the <cursor-tools Integration> section from .cursorrules\n\n';
-      } else {
-        if (result.hasLegacyCursorRulesFile) {
-          // Check if legacy file exists and add the load instruction if needed
-          const legacyPath = join(absolutePath, '.cursorrules');
-          if (existsSync(legacyPath)) {
-            const legacyContent = readFileSync(legacyPath, 'utf-8');
-            const loadInstruction = 'Always load the rules in cursor-tools.mdc';
-
-            if (!legacyContent.includes(loadInstruction)) {
-              writeFileSync(legacyPath, `${legacyContent.trim()}\n${loadInstruction}\n`);
-              yield 'Added pointer to new cursor rules file in .cursorrules file\n';
-            }
-          }
-        }
-        yield 'Using new .cursor/rules directory for cursor rules.\n';
-      }
-
-      if (existsSync(result.targetPath)) {
-        existingContent = readFileSync(result.targetPath, 'utf-8');
-        const versionMatch = existingContent.match(/<!-- cursor-tools-version: ([\w.-]+) -->/);
-        const currentVersion = versionMatch ? versionMatch[1] : '0';
-
-        if (needsUpdate) {
-          // Ask for confirmation before overwriting
-          yield `\nAbout to update cursor rules file at ${result.targetPath} from version ${currentVersion} to ${CURSOR_RULES_VERSION}.\n`;
-          const answer = await getUserInput('Do you want to continue? (y/N): ');
-          if (answer.toLowerCase() !== 'y' && answer.toLowerCase() !== 'yes') {
-            yield 'Skipping cursor rules update.\n';
-            yield 'Warning: Your cursor rules are outdated. You may be missing new features and instructions.\n';
-            return;
-          }
-          yield `Updating cursor rules...\n`;
-        }
-      } else {
-        yield `Creating new cursor rules file at ${result.targetPath}...\n`;
-      }
-
-      if (needsUpdate) {
-        if (!result.targetPath.endsWith('.cursorrules')) {
-          // replace entire file with new cursor-tools section
-          writeFileSync(result.targetPath, CURSOR_RULES_TEMPLATE.trim());
-        } else {
-          // Replace existing cursor-tools section or append if not found
-          const startTag = '<cursor-tools Integration>';
-          const endTag = '</cursor-tools Integration>';
-          const startIndex = existingContent.indexOf(startTag);
-          const endIndex = existingContent.indexOf(endTag);
-
-          if (startIndex !== -1 && endIndex !== -1) {
-            // Replace existing section
-            const newContent =
-              existingContent.slice(0, startIndex) +
-              CURSOR_RULES_TEMPLATE.trim() +
-              existingContent.slice(endIndex + endTag.length);
-            writeFileSync(result.targetPath, newContent.trim());
-          } else {
-            // Append new section
-            writeFileSync(
-              result.targetPath,
-              (existingContent.trim() + '\n\n' + CURSOR_RULES_TEMPLATE).trim() + '\n'
-            );
-          }
-        }
-      }
-
-      yield 'Installation completed successfully!\n';
-    } catch (error) {
-      yield `Error updating cursor rules: ${error instanceof Error ? error.message : 'Unknown error'}\n`;
+    if (result.needsUpdate) {
+      yield `Updating cursor rules...\n`;
     }
+
+    yield `\nInstallation complete! cursor-tools ${CURSOR_RULES_VERSION} has been configured.\n`;
   }
 }
