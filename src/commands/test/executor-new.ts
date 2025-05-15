@@ -16,11 +16,14 @@ import { createCommandExecutionTool } from './tools';
 import { BaseModelProvider, retryWithBackoff } from '../../providers/base';
 import { generateRules } from '../../vibe-rules';
 import { TestEnvironmentManager } from './environment';
+import { createLogger } from '../../utils/logger.js';
 import { StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { realpath } from 'fs/promises';
 
 // Replace the existing JSON response instructions with the new simplified schema
+const logger = createLogger('TestExecutor');
+
 const jsonResponseInstructions = `
 Return a JSON object with the following fields:
 - id: string (unique identifier for the test scenario)
@@ -92,7 +95,7 @@ Focus on the high-level strategy, key actions, and results of tool executions.
 Include both successful and failed tool calls in your summary.`;
 
   if (debug) {
-    console.log('Summarization Prompt:\n', prompt);
+    logger.debug('Summarization Prompt:\n', prompt);
   }
 
   try {
@@ -105,12 +108,12 @@ Include both successful and failed tool calls in your summary.`;
     });
 
     if (debug) {
-      console.log('Summarization Response:\n', summaryResponse);
+      logger.debug('Summarization Response:\n', summaryResponse);
     }
 
     return summaryResponse.trim();
   } catch (error) {
-    console.error('Error summarizing LLM conversation:', error);
+    logger.error('Error summarizing LLM conversation:', error);
     return `Error summarizing conversation: ${error instanceof Error ? error.message : 'Unknown error'}`;
   }
 }
@@ -159,7 +162,7 @@ export async function executeScenario(
   };
 
   // Create a temporary directory for this test scenario
-  const tempDir = await TestEnvironmentManager.createTempDirectory(scenarioId);
+  const tempDir = await TestEnvironmentManager.createTempDirectory(scenarioId, debug);
   appendToBuffer(`Created temporary directory: ${tempDir}`);
 
   // Copy assets and update task description with new references

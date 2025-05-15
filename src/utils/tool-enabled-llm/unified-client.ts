@@ -12,6 +12,7 @@ import {
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ProviderError } from '../../errors.js';
+import { createLogger } from '../logger.js';
 
 // Define core interfaces
 export interface InternalMessage {
@@ -131,6 +132,8 @@ function asValidMessageContentObject(content: string | any[]): Anthropic.Message
 /**
  * Unified Tool-Enabled LLM Client that supports both Anthropic and OpenRouter
  */
+const logger = createLogger('UnifiedLLMClient');
+
 export class UnifiedLLMClient {
   private anthropicClient?: Anthropic = undefined;
   private openrouterClient?: OpenAI = undefined;
@@ -155,7 +158,7 @@ export class UnifiedLLMClient {
       options.logger ||
       ((message: string) => {
         if (this.config.debug) {
-          console.log(message);
+          logger.log(message);
         }
       });
 
@@ -197,7 +200,7 @@ export class UnifiedLLMClient {
     // Initialize MCP client if in MCP mode
     if (this.config.mcpMode && this.config.mcpConfig) {
       if (this.config.debug) {
-        console.log(
+        logger.debug(
           'Initializing MCP client...',
           this.config.mcpConfig.command,
           this.config.mcpConfig.args
@@ -277,7 +280,7 @@ export class UnifiedLLMClient {
       // Track API call count if maxApiCalls is specified
       let apiCallCount = 0;
 
-      console.log(`Using ${provider} with model ${model}`);
+      logger.info(`Using ${provider} with model ${model}`);
 
       while (continueConversation) {
         // Before making the API call, update cache control for last 3 user messages
@@ -359,9 +362,9 @@ export class UnifiedLLMClient {
       // @ts-ignore
       return this.messages.slice(this.messages[0]?.role === 'system' ? 1 : 0);
     } catch (error) {
-      console.error('\nError during query processing:', error);
+      logger.error('Error during query processing:', error);
       if (this.config.debug) {
-        console.error('Detailed error:', error);
+        logger.error('Detailed error:', error);
       }
       throw error;
     }
@@ -525,8 +528,8 @@ export class UnifiedLLMClient {
 
       return stopReason;
     } catch (error) {
-      console.error(
-        '\nError during Anthropic stream processing:',
+      logger.error(
+        'Error during Anthropic stream processing:',
         error instanceof Error ? error.message : String(error)
       );
       throw error;
@@ -605,7 +608,7 @@ export class UnifiedLLMClient {
           let result: ToolExecutionResult;
           if (cachedCall) {
             if (this.config.debug) {
-              console.log('using cached tool result', toolCallName);
+              logger.debug('Using cached tool result for', toolCallName);
             }
             result = cachedCall.result;
           } else {
@@ -646,12 +649,12 @@ export class UnifiedLLMClient {
       }
 
       if (this.config.debug) {
-        console.log('\n[Message Complete]');
+        logger.debug('Message complete');
       }
 
       return stopReason;
     } catch (error) {
-      console.error('Error processing OpenRouter stream:', error);
+      logger.error('Error processing OpenRouter stream:', error);
       throw error;
     }
   }
@@ -688,10 +691,10 @@ export class UnifiedLLMClient {
       await this.initMCPTools();
 
       if (this.config.debug) {
-        console.log('MCP client started successfully');
+        logger.success('MCP client started successfully');
       }
     } catch (error) {
-      console.error('Failed to start MCP client:', error);
+      logger.error('Failed to start MCP client:', error);
       throw error;
     }
   }
@@ -704,10 +707,10 @@ export class UnifiedLLMClient {
       try {
         await this.mcpClient.close();
         if (this.config.debug) {
-          console.log('MCP client stopped successfully');
+          logger.success('MCP client stopped successfully');
         }
       } catch (error) {
-        console.error('Error stopping MCP client:', error);
+        logger.error('Error stopping MCP client:', error);
       }
     }
   }
@@ -725,7 +728,7 @@ export class UnifiedLLMClient {
       const toolDescriptions = await this.mcpClient.listTools();
 
       if (this.config.debug) {
-        console.log('Available MCP tools:', JSON.stringify(toolDescriptions, null, 2));
+        logger.debug('Available MCP tools:', JSON.stringify(toolDescriptions, null, 2));
       }
 
       for (const tool of toolDescriptions.tools) {
@@ -804,10 +807,10 @@ export class UnifiedLLMClient {
       }
 
       if (this.config.debug) {
-        console.log(`Initialized ${toolDescriptions.tools.length} MCP tools`);
+        logger.info(`Initialized ${toolDescriptions.tools.length} MCP tools`);
       }
     } catch (error) {
-      console.error('Error initializing MCP tools:', error);
+      logger.error('Error initializing MCP tools:', error);
       throw error;
     }
   }
@@ -880,7 +883,7 @@ export class UnifiedLLMClient {
 
       return result;
     } catch (error) {
-      console.error(`Error executing tool "${toolName}":`, error);
+      logger.error(`Error executing tool "${toolName}":`, error);
       return {
         success: false,
         output: `Tool execution error: ${error instanceof Error ? error.message : String(error)}`,

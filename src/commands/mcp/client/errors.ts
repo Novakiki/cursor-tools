@@ -43,6 +43,13 @@ export class MCPConfigError extends MCPError {
   }
 }
 
+export class NeedsMoreInfoError extends MCPConfigError {
+  constructor(public info: string, public serverName: string) {
+    super(`Configuration for server '${serverName}' requires additional information: ${info}`);
+    this.name = 'NeedsMoreInfoError';
+  }
+}
+
 export class MCPAuthError extends MCPError {
   constructor(message: string) {
     super(message);
@@ -57,6 +64,11 @@ export class MCPAuthError extends MCPError {
 export function handleMCPError(error: unknown): MCPError {
   if (error instanceof MCPError) {
     return error;
+  }
+  
+  // Special handling for NeedsMoreInfoError to preserve the specific type
+  if (error instanceof Error && error.name === 'NeedsMoreInfoError' && 'serverName' in error && 'info' in error) {
+    return new NeedsMoreInfoError(error.info as string, error.serverName as string);
   }
 
   if (error instanceof Error) {

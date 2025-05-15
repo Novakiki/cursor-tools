@@ -1,7 +1,10 @@
 import type { Command, CommandGenerator, CommandOptions } from '../../types';
 import { MarketplaceManager, type MCPServer } from './marketplace.js';
 import { InternalMessage } from './client/MCPClientNew.js';
-import { MCPConfigError } from './client/errors.js';
+import { MCPConfigError, NeedsMoreInfoError } from './client/errors.js';
+import { createLogger } from '../../utils/logger.js';
+
+const logger = createLogger('RunCommand');
 import { createProvider } from '../../providers/base';
 import { once } from '../../utils/once.js';
 import { execFile as execFileCallback } from 'node:child_process';
@@ -35,11 +38,11 @@ const pathToUvx = once(async (): Promise<string> => {
     const { stdout } = await execFile('which', ['uvx']);
     const uvxPath = stdout.trim();
     if (uvxPath) {
-      console.log('uvxPath', uvxPath);
+      logger.debug('Found uvx path:', uvxPath);
       return uvxPath;
     }
   } catch (error) {
-    console.error('Error finding uvx:', error);
+    logger.error('Error finding uvx:', error);
   }
   return 'uvx';
 });
@@ -49,11 +52,11 @@ const pathToNpx = once(async (): Promise<string> => {
     const { stdout } = await execFile('which', ['npx']);
     const npxPath = stdout.trim();
     if (npxPath) {
-      console.log('npxPath', npxPath);
+      logger.debug('Found npx path:', npxPath);
       return npxPath;
     }
   } catch (error) {
-    console.error('Error finding npx:', error);
+    logger.error('Error finding npx:', error);
   }
   return 'npx';
 });
@@ -156,8 +159,8 @@ HOWEVER if the server details show that you cannot run with uvx or npx, or if yo
       // Parse the response and ensure it's an array of strings
       let args = JSON.parse(cleanedResponse);
       if (options.debug) {
-        console.log(
-          'server config',
+        logger.debug(
+          'Server config:',
           JSON.stringify({ ...args, env: Object.keys(args.env ?? {}) }, null, 2)
         );
       }
@@ -173,9 +176,7 @@ HOWEVER if the server details show that you cannot run with uvx or npx, or if yo
       }
 
       if (args.needsMoreInfo) {
-        throw new Error(
-          `We need more information from you to generate the MCP server configuration. Please re run the command provide the following information: ${args.needsMoreInfo}`
-        );
+        throw new NeedsMoreInfoError(args.needsMoreInfo, server.name);
       }
 
       const keys = Object.keys(args.mcpServers);
@@ -185,7 +186,7 @@ HOWEVER if the server details show that you cannot run with uvx or npx, or if yo
 
       // If server has hardcoded args from an override, use those directly
       if (server.command && server.args) {
-        console.log('Using hardcoded configuration from override for server', server.name);
+        logger.info('Using hardcoded configuration from override for server', server.name);
         return {
           command: server.command === 'uvx' ? 'uvx' : 'npx',
           args: server.args,
@@ -240,7 +241,7 @@ HOWEVER if the server details show that you cannot run with uvx or npx, or if yo
         env: populateEnv(env),
       };
     } catch (error) {
-      console.error('Error generating MCP config:', error);
+      logger.error('Error generating MCP config:', error);
       // If we fail to generate arguments, return default args or empty array if no defaults
       throw error;
     }
@@ -277,7 +278,7 @@ HOWEVER if the server details show that you cannot run with uvx or npx, or if yo
       servers = [servers];
     }
     if (servers.length > 3) {
-      console.log('More than 3 candidate servers, asking AI to narrow down the selection', servers);
+      logger.info('More than 3 candidate servers, asking AI to narrow down the selection', servers);
       const query = `I want to choose at most 5 MCP servers from the provided list to satisfy the query '${queryInput}'. Please select the most relevant and likely to run, taking into account the README and that we have the following environment variables <Environment variables>${Object.keys(
         process.env
       )
@@ -332,8 +333,15 @@ HOWEVER if the server details show that you cannot run with uvx or npx, or if yo
                 fail: attempts === maxAttempts - 1,
               });
             } catch (error) {
-              yields.push(`Error generating arguments for ${server.name}: ${error}\n`);
-              // these shouldbreak out of the loop
+              if (error instanceof NeedsMoreInfoError) {
+                // Add a user-friendly message for NeedsMoreInfoError
+                yields.push(`\nFor server '${error.serverName}', additional information is needed:\n${error.info}\n\nPlease try the command again, including these details in your query.\n`);
+                // Return early with a clear message, not as a generic error
+              } else {
+                // For other errors, provide a generic error message
+                yields.push(`Error generating arguments for ${server.name}: ${error}\n`);
+              }
+              // Either way, break out of the loop
               return { type: 'failure' as const, server, error: error, yields };
             }
             yields.push(
@@ -359,6 +367,15 @@ HOWEVER if the server details show that you cannot run with uvx or npx, or if yo
             attempts++;
             lastError = error instanceof Error ? error.message : String(error);
             console.error(`Attempt ${attempts} for ${server.name} failed`, lastError);
+            
+            if (error instanceof NeedsMoreInfoError) {
+              // Add a user-friendly message to the yields array
+              yields.push(`\nFor server '${error.serverName}', additional information is needed:\n${error.info}\n\nPlease try the command again, including these details in your query.\n`);
+              // Treat this as a non-retryable configuration failure for this server,
+              // as retrying without new info won't help.
+              return { type: 'failure' as const, server, error: `Awaiting further information for ${server.name}.`, yields };
+            }
+            
             if (attempts < maxAttempts) {
               yields.push(
                 `Attempt ${attempts} for ${server.name} failed with error: ${lastError}. Retrying with error feedback...\n`
@@ -366,8 +383,8 @@ HOWEVER if the server details show that you cannot run with uvx or npx, or if yo
               // Regenerate config with error feedback
               query = `${query}\n\nPrevious attempt failed with configuration: ${JSON.stringify({ ...serverConfig, env: removeEnvValues(serverConfig?.env ?? {}) }, null, 2)}\nError: ${lastError}`;
               if (options.debug) {
-                console.log('query', query);
-              }
+                logger.debug('Updated query for retry:', query);
+                }
             } else {
               yields.push(
                 `⚠️ Failed to initialize ${server.name} after ${maxAttempts} attempts. Last error: ${lastError}\n`
@@ -405,7 +422,7 @@ HOWEVER if the server details show that you cannot run with uvx or npx, or if yo
       // log all yields
       for (const result of serverResults) {
         for (const msg of result.yields) {
-          console.log(`${result.server.name}: ${msg}`);
+          logger.info(`Server ${result.server.name}:`, msg);
         }
       }
 

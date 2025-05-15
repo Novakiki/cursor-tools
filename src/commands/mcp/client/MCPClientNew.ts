@@ -1,6 +1,9 @@
 import { UnifiedLLMClient } from '../../../utils/tool-enabled-llm/unified-client.js';
 import { StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { MCPError, handleMCPError } from './errors.js';
+import { createLogger } from '../../../utils/logger.js';
+
+const logger = createLogger('MCPClientNew');
 
 // InternalMessage interface - matches the one in unified-client.js
 export interface InternalMessage {
@@ -41,19 +44,19 @@ export class MCPClientNew {
       model,
       maxTokens: serverConfig.maxTokens || 8192,
       logger: (message) => {
-        console.log(message);
+        logger.log(message);
       },
     });
   }
 
   async start() {
     try {
-      console.log('starting mcp client');
+      logger.log('Starting MCP client...');
 
       // Start the MCP mode in the unified client
       await this.unifiedClient.startMCP();
     } catch (error) {
-      console.error('Failed to initialize MCP Client:', error);
+      logger.error('Failed to initialize MCP Client:', error);
       const mcpError = handleMCPError(error);
       throw mcpError;
     }
@@ -65,7 +68,7 @@ export class MCPClientNew {
       await this.unifiedClient.stopMCP();
     } catch (error) {
       const mcpError = handleMCPError(error);
-      console.error('Error closing MCP Client:', mcpError);
+      logger.error('Error closing MCP Client:', mcpError);
       throw mcpError;
     }
   }
@@ -82,11 +85,11 @@ export class MCPClientNew {
       // Return messages, skipping the first one which is just the env vars
       return messages.slice(1);
     } catch (error) {
-      console.error('Error during query processing:', error);
+      logger.error('Error during query processing:', error);
       const mcpError = handleMCPError(error);
-      console.error('\nError during query processing:', mcpError.message);
+      logger.error('Error during query processing:', mcpError.message);
       if (this.debug) {
-        console.error(mcpError.stack);
+        logger.error('Stack trace:', mcpError.stack);
       }
       throw mcpError;
     }

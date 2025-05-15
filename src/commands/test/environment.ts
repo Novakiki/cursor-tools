@@ -2,6 +2,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as crypto from 'crypto';
+import { createLogger } from '../../utils/logger.js';
+
+const logger = createLogger('TestEnvironment');
 
 /**
  * Manages isolated test environments for each test scenario.
@@ -14,7 +17,7 @@ export class TestEnvironmentManager {
    * @returns The path to the created temporary directory
    * @throws Error if directory creation fails
    */
-  static async createTempDirectory(scenarioId: string): Promise<string> {
+  static async createTempDirectory(scenarioId: string, debug: boolean = false): Promise<string> {
     // Create a unique directory name with timestamp and random suffix for collision avoidance
     const timestamp = Date.now();
     const randomSuffix = crypto.randomBytes(4).toString('hex');
@@ -28,7 +31,7 @@ export class TestEnvironmentManager {
       await fs.promises.mkdir(tempDir, { recursive: true });
     } catch (error) {
       const errorMessage = `Failed to create temporary directory at ${tempDir}: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(errorMessage);
+      logger.error(errorMessage);
       throw new Error(errorMessage);
     }
 
@@ -42,7 +45,7 @@ export class TestEnvironmentManager {
       await fs.promises.symlink(nodeModulesPath, symlinkPath, 'junction');
     } catch (error) {
       const errorMessage = `Failed to create symlink to node_modules: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(errorMessage);
+      logger.error(errorMessage);
       // Don't throw here - we can still proceed with tests even without the symlink,
       // it might just result in test failures that will be properly reported
     }
@@ -54,7 +57,7 @@ export class TestEnvironmentManager {
       await fs.promises.writeFile(path.join(tempDir, 'package.json'), packageJsonContent);
     } catch (error) {
       const errorMessage = `Failed to copy package.json: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(errorMessage);
+      logger.error(errorMessage);
       // Don't throw here - we can still proceed with tests even without package.json,
       // it might just result in test failures that will be properly reported
     }
@@ -80,20 +83,24 @@ export class TestEnvironmentManager {
           // Copy the .cursorrules file
           const cursorRulesContent = await fs.promises.readFile(altCursorRulesPath, 'utf-8');
           await fs.promises.writeFile(path.join(tempDir, '.cursorrules'), cursorRulesContent);
-          console.log(`Copied .cursorrules to ${tempDir}`);
+          if (debug) {
+            logger.debug(`Copied .cursorrules to ${tempDir}`);
+          }
         } else {
-          console.log('No cursor rules file found to copy');
+          if (debug) {
+            logger.debug('No cursor rules file found to copy');
+          }
         }
       }
     } catch (error) {
       const errorMessage = `Failed to copy cursor rules: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(errorMessage);
+      logger.error(errorMessage);
       // Don't throw here - we can still proceed with tests even without cursor rules,
       // it will just show warnings
     }
 
-    if (process.env.DEBUG) {
-      console.log(`[DEBUG] Created temporary directory: ${tempDir}`);
+    if (debug) {
+      logger.debug(`Created temporary directory: ${tempDir}`);
     }
 
     return tempDir;
@@ -232,12 +239,12 @@ export class TestEnvironmentManager {
     const assetRefs = this.extractAssetReferences(scenario.taskDescription);
 
     if (assetRefs.length === 0) {
-      if (debug) console.log('No asset references found in task description');
+      if (debug) logger.debug('No asset references found in task description');
       return scenario.taskDescription;
     }
 
     if (debug)
-      console.log(`Found ${assetRefs.length} asset references in task description:`, assetRefs);
+      logger.debug(`Found ${assetRefs.length} asset references in task description:`, assetRefs);
 
     // Create assets directory in temp dir
     const assetsTempDir = path.join(tempDir, 'assets');
@@ -245,7 +252,7 @@ export class TestEnvironmentManager {
       await fs.promises.mkdir(assetsTempDir, { recursive: true });
     } catch (error) {
       const errorMessage = `Failed to create assets directory at ${assetsTempDir}: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(errorMessage);
+      logger.error(errorMessage);
       // We'll continue and try to copy assets anyway, but log the warning
     }
 
@@ -263,10 +270,8 @@ export class TestEnvironmentManager {
         // Copy the asset file
         await fs.promises.copyFile(sourcePath, destPath);
 
-        if (process.env.DEBUG) {
-          console.log(`[DEBUG] Copied asset: ${sourcePath} -> ${destPath}`);
-        } else {
-          console.log(`Copied asset: ${assetFileName}`);
+        if (debug) {
+          logger.debug(`Copied asset: ${assetFileName}`);
         }
 
         // Update references in the task description
@@ -281,18 +286,18 @@ export class TestEnvironmentManager {
 
           // Verify the replacement occurred
           if (beforeReplace === modifiedTaskDescription) {
-            console.warn(
-              `Warning: Failed to replace path reference ${assetRef.originalRef} with ${destPath}`
+            logger.warn(
+              `Failed to replace path reference ${assetRef.originalRef} with ${destPath}`
             );
-          } else {
-            console.log(
+          } else if (debug) {
+            logger.debug(
               `Replaced path reference ${assetRef.originalRef} with absolute path ${destPath}`
             );
           }
         }
       } catch (error) {
         const errorMessage = `Error processing asset ${assetRef.name}: ${error instanceof Error ? error.message : String(error)}`;
-        console.error(errorMessage);
+        logger.error(errorMessage);
         failedAssets.push({
           name: assetRef.name,
           error: error instanceof Error ? error.message : String(error),
@@ -303,9 +308,9 @@ export class TestEnvironmentManager {
 
     // Report failed assets if any
     if (failedAssets.length > 0) {
-      console.error(`Failed to copy ${failedAssets.length} assets:`);
+      logger.error(`Failed to copy ${failedAssets.length} assets:`);
       failedAssets.forEach((fail) => {
-        console.error(`  - ${fail.name}: ${fail.error}`);
+        logger.error(`  - ${fail.name}: ${fail.error}`);
       });
     }
 
@@ -318,7 +323,7 @@ export class TestEnvironmentManager {
    */
   static async cleanup(tempDir: string): Promise<void> {
     if (!tempDir || typeof tempDir !== 'string' || tempDir.trim() === '') {
-      console.warn('Cleanup called with invalid temp directory path');
+      logger.warn('Cleanup called with invalid temp directory path');
       return;
     }
 
@@ -327,7 +332,7 @@ export class TestEnvironmentManager {
     const normalizedOsTempDir = path.normalize(os.tmpdir());
 
     if (!normalizedTempDir.startsWith(normalizedOsTempDir)) {
-      console.error(`[WARNING] Attempted to clean up directory outside of temp: ${tempDir}`);
+      logger.error(`Attempted to clean up directory outside of temp: ${tempDir}`);
       return;
     }
 
@@ -335,15 +340,15 @@ export class TestEnvironmentManager {
       // Recursive directory removal
       await fs.promises.rm(tempDir, { recursive: true, force: true });
 
-      console.log(`Cleaned up temporary directory: ${tempDir}`);
+      logger.success(`Cleaned up temporary directory: ${tempDir}`);
     } catch (error) {
       // Log but don't throw - cleanup failures shouldn't fail tests
-      console.error(`[WARNING] Failed to clean up temporary directory: ${tempDir}`, error);
+      logger.error(`Failed to clean up temporary directory: ${tempDir}`, error);
 
       // Try to list what's still there to help debugging
       try {
         const entries = await fs.promises.readdir(tempDir);
-        console.error(`[WARNING] Remaining files in ${tempDir}: ${entries.join(', ')}`);
+        logger.error(`Remaining files in ${tempDir}: ${entries.join(', ')}`);
       } catch {
         // Just suppressing further errors during error handling
       }
